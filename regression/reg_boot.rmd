@@ -1,0 +1,127 @@
+---
+html_document:
+  toc: yes
+author: "Your Name"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+title: "Bootstrapping Regression Metrics"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+
+```
+
+## Introduction
+
+In this assignment we use bootstrapping to estimate the standard error 
+of several regression coefficients. We did this in class with adjusted R-squared.
+
+In the past few assignments I've created most of the framework for you and 
+asked you to fill in pieces that I've left blank. This assignment is 
+different. I'll ask you use techniques we've discussed to answer some questions
+that I'll ask, but you'll be doing most of the coding and writing on your own. 
+Feel free to use this actual RMD file for your writing, but now you'll need 
+to know how to do code blocks and things like that. If you're anything like me,
+you'll find the 
+[R Markdown Cheat Sheet](https://github.com/rstudio/cheatsheets/raw/master/rmarkdown-2.0.pdf)
+invaluable. Please write this document with attention to things like headers, 
+spelling, 
+and formatting. It need not be as polished as a formal report, but 
+I'll ask you to revise
+it if it looks like garbage. I'm not expecting a ton of writing here, but I'd like 
+it to look nice. Remember to knit your document to HTML and commit both 
+your RMD and HTMLfiles. 
+
+## Assignment
+
+Here is what I'd like you do: 
+
+1. Begin by building a regression model using the satisfaction survey data. Have your 
+model predict satisfaction as a function of tenure and assigned sex. This is the model
+we built in class. 
+
+```{r}
+library(tidyverse)
+d <- read.table("satisfaction_survey.txt", header=T, sep="\t" )
+
+lm1 <- lm(d$satisfaction~d$tenure+d$assigned_sex) 
+
+summary(lm1)
+
+plot(lm1)
+```
+
+1. Describe the results briefly. This means reporting the $R^2$, the residual standard
+errors, the coefficients and their standard errors. This model 
+should have four terms, with one each for the intercept and tenure and two for 
+assigned sex. 
+
+The adjusted $R^2$ for the linear model is 0.1439, this shows that tenure and assigned sex explain about 14% of the variation in satisfaction in the dataset.The residual standard error for the model is 1.013, which, seems to me like it's right in the middle of being a "good" standard error (a model that explains a lot of variation) and a bad standard error (a model that explains little variation in the data). The intercept coefficient is 3.18 meaning that with a tenure of zero, an employees satisfaction is predicted to be 3.18 if they are female. The coefficients for assigned sex male (0.55) and assigned sex neither (-0.37) can be added to the intercept coefficient to determine the intercept for the regression lines for those two variables when all else is held constant.The coefficient for tenure is 0.22, meaning that for every one unit increase in tenure, satisfaction is predicted to increase by 0.22 units when all else is held equal. The standard errors for the coefficients are as follows: intercept- 0.13, tenure- 0.04, assigned sex male- 0.12, assigned sex neither- 0.34. The lower the standard error of the coefficient the, the better the coefficient is at predicting the change in satisfaction, in this model, tenure does a good job at predicting change having the lowest standard error, while assigned sex neither only does an OK job of explaining changes in satisfaction. The standard error of the coefficients also estimates what the variability may be like for the same coefficient across different samples.
+
+
+
+1. Use bootstrap resampling (either the `rsample` method or the manual method) to 
+generate standard error estimates for the residual standard error and the model terms. 
+
+```{r}
+fit_fun <- function(d) {
+  lm1 <- lm(d$satisfaction~d$tenure+d$assigned_sex) 
+  list(residuals = residuals(lm1), coefficients = coef(lm1))
+}
+
+my_formula <- formula(lm1)
+
+
+n <- 1000
+
+set.seed(1234)
+
+
+boot_data <- replicate(n, sample_n(d, size = nrow(d), replace = TRUE), simplify = FALSE)
+boot_results <- lapply(boot_data, fit_fun)
+
+
+residuals_boot <- sapply(boot_results, function(x) x$residuals)
+coef_boot <- t(sapply(boot_results, function(x) x$coefficients))
+
+
+resid_se <- sd(residuals_boot)
+coef_se <- apply(coef_boot, 2, sd)
+
+
+```
+
+
+
+Report the 90% confidence interval for these statistics from the bootstrap replicates.
+```{r}
+resid_ci <- quantile(residuals_boot, c(0.05, 0.95))
+coef_ci <- apply(coef_boot, 2, function(x) quantile(x, c(0.05, 0.95)))
+
+resid_tbl <- tibble(resid_se = resid_se, resid_ci_lower = resid_ci[1], resid_ci_upper = resid_ci[2])
+coef_ci <- apply(coef_boot, 2, function(x) quantile(x, c(0.05, 0.95)))
+coef_names <- c("intercept", "tenure", "assigned_sex_male", "assigned_sex_neither")
+coef_tbl <- tibble(coef_names = coef_names, coef_se = coef_se, coef_ci_lower = coef_ci[1, ], coef_ci_upper = coef_ci[2, ])
+
+
+
+print(resid_tbl)
+print(coef_tbl)
+
+```
+
+1. Briefly compare the values from `summary.lm` to the bootstrap replicates. 
+
+The standard errors of all the coefficients whether using the boostrap analysis or the single multiple regression are very close (within 0.01) of each other, besides the assigned_sex_neither coefficient. This variation may be due to the assigned_sex_neither variable having a low number of observations in the original dataset. The residual standard error is also only different by about 0.01. All of this lends to that fact that both analyses show evidence of each being useful models.
+
+As always, please me know if you have any questions. Feel free to ask on Teams 
+so that your
+classmates benefit from your curiosity or confusion. 
+
+
+
+
+
+

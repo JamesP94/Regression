@@ -1,0 +1,136 @@
+---
+title: "Subaru_Regression"
+author: "James Paul"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, warning = F)
+library(dplyr)
+library(tidyverse)
+library(tidymodels)
+library(lubridate)
+```
+
+
+```{r}
+d.subaru <- read_tsv("subaru_data.txt") %>% 
+  mutate(odometer = as.numeric(odometer),
+         year = as.numeric(year))
+```
+Naturally, I started this analysis by reading in the Subaru data.
+
+```{r}
+d.prep <- d.subaru %>% 
+  recipe() %>% 
+  step_other(model,threshold = 500) %>%
+  step_impute_knn(year, impute_with = imp_vars(odometer, price)) %>%
+  step_impute_knn(model, impute_with = imp_vars(odometer, price, year))%>%
+  step_log(odometer) %>%
+  step_mutate(year=substr(as.character(year),1,4)) %>%
+  step_mutate(year=as.numeric(year))%>%
+  step_mutate(year=ifelse(year>=1990 & year<=2023,year,NA_real_))%>%
+  step_mutate(odometer=substr(as.character(odometer),1,6))%>%
+  step_mutate(odometer= as.numeric(odometer))%>%
+  step_mutate(odometer=odometer*10000)%>%
+  step_mutate(title_status=if_else(title_status %in% c("clean","lien"),title_status, NA_character_))%>%
+  step_mutate(cylinders=if_else(cylinders %in% c("4 cylinders","6 cylinders","8 cylinders"),cylinders,NA_character_))%>%
+  step_mutate(price= as.numeric(as.character(price)))%>%
+  step_mutate(price=ifelse(price>=1000 & price<=100000, price, NA_real_))%>%
+  step_naomit(price, model, odometer, year, cylinders)%>%
+  prep() %>% 
+  juice()
+```
+
+After reading in the data, it was apparent that there was a fair amount of cleaning that needed to be done to the data, the recipe above is all of the step functions I used to clean the data in a way I found useful. The one step above that I thought may be unusual or controversial is where I imputed car model, I wanted to limit the number of NA values in that variable. One of the variables I used to create the imputation data was also imputed (year). I considered this and felt that although this could lead to more inaccuracy, it was useful to get an idea of what model car were likely talking about. The consequences of being wrong are also low and whether the KNN model predicted the car model correctly would be apparent after contacting someone about the vehicle in question if interested.Another thing I did here was omit all of the NA values from price, model, odometer, year, and cylinders; in order for the model I create later to run properly.
+```{r}
+set.seed(042723)
+all.sub.idx <- sample(seq_len(nrow(d.prep)),size = floor(0.8*nrow(d.prep)), replace=F)
+sub.train <- d.prep[all.sub.idx,]
+sub.test <- d.prep[-all.sub.idx,]
+
+```
+Next, I split the data into training and test datasets. I went with the default here, so there is 75% of the data in the training dataset and 25% of the data in the testing dataset.
+
+
+
+```{r}
+
+set.seed(42723)
+sub.splits <- initial_split(d.prep)
+d.train <- training(sub.splits)
+d.test <- testing(sub.splits)
+filtered.train <- d.train %>% filter(!is.infinite(odometer))
+filtered.test <- d.test %>% filter(!is.infinite(odometer))
+
+sub.model <- linear_reg()%>%
+  set_engine("lm")
+
+sub.fit <- sub.model %>%
+  fit(price~model+odometer+year+cylinders, data=filtered.train)
+```
+At this point, I was ready to create a model, and that's what the code above does. I also had to filter out the -inf values due to the linear regression function not working when infinite values are present. I chose linear regression for this analysis because its the technique I'm the most familiar with and because it is good at making predictions; the goal of this analysis. Knowing what limited amount I do about cars, I used model, odometer, year, and number of cylinders as my predictor variables.
+
+```{r}
+predict(sub.fit,filtered.test)
+
+filtered.test <- filtered.test %>%
+  mutate(prediction= predict(sub.fit,filtered.test) %>%
+  pull(.pred))
+
+```
+After creating a good model, I used predict to test my model with the test data set aside previously. I was satisfied with the predictions I got from the model at face value, they looked to be reasonable. I did some further analysis below on the predicitons my model created.
+
+
+```{r}
+filtered.d.prep <- d.prep %>% filter(!is.infinite(odometer))
+
+sub.fit.comp <- sub.model %>%
+  fit(price~model+odometer+year+cylinders, data=filtered.d.prep)
+
+predict(sub.fit.comp,filtered.d.prep)
+
+filtered.d.prep <- filtered.d.prep %>%
+  mutate(prediction= predict(sub.fit.comp,filtered.d.prep) %>%
+  pull(.pred))
+
+filtered.d.prep$residuals <- filtered.d.prep$price - filtered.d.prep$prediction
+```
+Once I came to the conclusion I was satisfied with the model I created, I applied the model to the entire dataset. Once I had a predicted price for the whole dataset I was able to easily create a residuals column in the dataset.
+
+
+```{r}
+best.deals <- filtered.d.prep %>% filter(residuals >= -2500 & residuals <= -2000)
+
+arrange(best.deals, residuals)
+```
+Now that I had the residuals, I was able to begin looking for the best deal. To do this, I filtered my results down to a narrow window where I thought the best deals would be without being too good to be true. This "sweet spot" I decided on was where the model predicted the vehicle should cost $2000-$2500 more than it is listed on craigslist as. Then I arranged the results to make them easy to navigate. this gave me a total of 593 cars. After looking at the cars closest to the $2500 discount mark and considering a few of their other attributes, I believe the best deals would be:
+1. The 2007 subaru legacy post_id 6770469528
+2. The 2009 subaru outback post_id 6902988649
+3. The 2013 subaru of unknown model post_id 6776398711
+4. The 2010 subaru forester post_id 6734485657
+5. The 2008 subaru impreza post_id 6920127316
+
+All of these vehicles were predicted to cost around $2500 dollars more than they were listed for and all had clean titles and were a decade or less old at the time the data was drawn.
+
+```{r}
+ggplot(filtered.d.prep, aes(x= crumb_area, y= price))+
+  geom_boxplot()+
+  ggtitle("Price Based on Location")
+```
+
+Next I looked at the price of subarus based on location, and according to this data and the boxplot above, Minneapolis has the cheaper cars compared to Missoula or Atlanta
+
+```{r}
+cor.test(filtered.d.prep$price, filtered.d.prep$year)
+
+cor.test(filtered.d.prep$price, filtered.d.prep$odometer)
+
+ggplot(filtered.d.prep, aes(x=model, y= price)) +
+  geom_boxplot()+
+  ggtitle("Model of Car Compared to Price")
+```
+
+Finally, the last thing I did for this analysis was looked at the correlation between price and year, price and mileage, and I created a boxplot to compare model and price. The correlation between price and year in this data was nearly right in the middle, it was a positive correlation of 0.47, which is what we would expect, the newer the car the more expensive it will be. Conversely, the correlation between price and mileage was a fairly week negative correlation of -0.23. This is also along the lines of what we would expect, as mileage goes up, price tends to decrease. Lastly, the boxplot comparing price to model of car is interesting to look over, the price of most of the models is comparable. The one model that does tend to be more expensive though is the subaru WRX.
+
